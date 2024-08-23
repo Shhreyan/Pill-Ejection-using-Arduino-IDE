@@ -1,5 +1,3 @@
-# Pill-Ejection-using-Arduino-IDE
-
 # Pill Dispensing System with ESP8266
 
 This project is a pill dispensing system using an ESP8266 microcontroller. The system is designed to dispense pills either manually through a button press or automatically based on a set interval. It includes an OLED display to show status and remaining time until the next automatic dispensing.
