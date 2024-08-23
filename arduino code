@@ -1,0 +1,173 @@
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define SCREEN_ADDRESS 0x3C
+
+#define SERVO_PIN D4 // Pin for servo motor
+#define WIFI_SSID "Pixel 6a" // Your WiFi SSID
+#define WIFI_PASSWORD "00000002" // Your WiFi password
+
+Servo servoMotor;
+ESP8266WebServer server(80);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const int buttonPin = D1; // Pin for the button
+int buttonState = 0; // Current state of the button
+int lastButtonState = 0; // Previous state of the button
+unsigned long lastDebounceTime = 0; // Last time the button state changed
+unsigned long debounceDelay = 50; // Debounce time (milliseconds)
+unsigned long interval = 0; // Default interval for automatic dispensing (0 seconds)
+unsigned long previousMillis = 0; // Variable to store the last time the pill was dispensed
+unsigned long intervalMillis = 0; // Variable to store the last time the interval was checked
+
+void handleRoot() {
+  server.send(200, "text/html", "<html><body><h1>Pill Ejection Control</h1><p><a href=\"/dispense\">Dispense Pill</a></p><p><form action=\"/interval\" method=\"get\">Interval (seconds): <input type=\"text\" name=\"interval\"><input type=\"submit\" value=\"Set\"></form></p></body></html>");
+}
+
+void handleDispense() {
+  unsigned long currentMillis = millis();
+  if (interval == 0 || (currentMillis - previousMillis >= intervalMillis && intervalMillis != 0)) {
+    previousMillis = currentMillis;
+    dispensePill();
+    server.send(200, "text/plain", "Pill dispensed");
+  } else {
+    server.send(200, "text/plain", "Interval not reached");
+  }
+}
+
+void handleInterval() {
+  if (server.arg("interval") != "") {
+    interval = server.arg("interval").toInt() * 1000; // Convert to milliseconds
+    intervalMillis = interval;
+    previousMillis = millis(); // Reset timer when interval is set
+  }
+  server.send(200, "text/plain", "Interval set");
+}
+
+void dispensePill() {
+  servoMotor.write(180); // Eject pill
+  delay(200); // Delay for 0.2 seconds
+  servoMotor.write(0); // Retract pill
+  display.clearDisplay();
+  display.setTextSize(1.5);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Pill Dispensed");
+  display.display();
+}
+
+void displayTimeRemaining(unsigned long remainingMillis) {
+  unsigned long remainingSeconds = remainingMillis / 1000;
+  display.setTextSize(1.5);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 50);
+  display.print("Next in ");
+  display.print(remainingSeconds);
+  display.print(" seconds");
+  display.display();
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Initialize OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;) {}
+  }
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1.5);
+  display.setCursor(0, 0);
+  display.println("Connecting to WiFi...");
+  display.display();
+
+  // Connect to WiFi
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Display IP address on OLED
+  display.clearDisplay();
+  display.setTextSize(1.5);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  display.println("WiFi connected");
+  display.println("IP address:");
+  display.println(WiFi.localIP());
+  display.display();
+  delay(25000); // Display for 25 seconds
+
+  // Start web server
+  server.on("/", handleRoot);
+  server.on("/dispense", handleDispense);
+  server.on("/interval", handleInterval);
+  server.begin();
+  Serial.println("HTTP server started");
+
+  // Attach servo motor
+  servoMotor.attach(SERVO_PIN);
+  servoMotor.write(0); // Initial position (retracted)
+
+  // Configure button pin
+  pinMode(buttonPin, INPUT);
+}
+
+void loop() {
+  server.handleClient();
+
+  // Read the state of the button
+  int reading = digitalRead(buttonPin);
+
+  // Check if the button state has changed
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  // Check for button debounce
+  if (millis() - lastDebounceTime > debounceDelay) {
+    // If the button state has changed
+    if (reading != buttonState) {
+      buttonState = reading;
+      if (buttonState == HIGH) {
+        dispensePill();
+        previousMillis = millis(); // Reset timer for manual dispensing
+      }
+    }
+  }
+
+  // Check if interval is set and dispense pill automatically
+  unsigned long currentMillis = millis();
+  if (interval != 0 && currentMillis - previousMillis >= intervalMillis) {
+    dispensePill();
+    previousMillis = currentMillis;
+  }
+
+  // Display time remaining until next dispensation
+  if (interval != 0) {
+    unsigned long remainingMillis = intervalMillis - (currentMillis - previousMillis);
+    display.clearDisplay();
+    displayTimeRemaining(remainingMillis);
+  }
+
+  lastButtonState = reading;
+}
